@@ -233,6 +233,40 @@ class Application:
             combined.blit(cam_surf, (0, 0))
             combined.blit(mask_surf, (0, CAM_H))
 
+            # Draw labels for the two preview frames (bottom-left of each frame)
+            try:
+                simulated = isinstance(self.picam2, DummyPicamera2)
+            except Exception:
+                simulated = False
+
+            top_label = "Camera (simulated)" if simulated else "Camera"
+            bottom_label = "LCD output"
+
+            font = pygame.font.SysFont(None, 20)
+
+            # Helper to draw a label with a semi-transparent black box
+            def draw_label(surface, text, x, y, padding=6, alpha=160):
+                txt = font.render(text, True, (255, 255, 255))
+                w, h = txt.get_width(), txt.get_height()
+                bg = pygame.Surface((w + padding * 2, h + padding * 2), pygame.SRCALPHA)
+                bg.fill((0, 0, 0, alpha))
+                surface.blit(bg, (x - padding, y - padding))
+                surface.blit(txt, (x, y))
+
+            margin = 6
+
+            # Top frame bottom-left (inside the top frame)
+            txt_top = top_label
+            top_x = margin
+            top_y = CAM_H - font.get_height() - margin
+            draw_label(combined, txt_top, top_x, top_y)
+
+            # Bottom frame bottom-left (inside the bottom frame)
+            txt_bot = bottom_label
+            bot_x = margin
+            bot_y = CAM_H * 2 - font.get_height() - margin
+            draw_label(combined, txt_bot, bot_x, bot_y)
+
             scaled = pygame.transform.smoothscale(combined, (target_w, target_h))
             screen.fill((0, 0, 0))
             screen.blit(scaled, (blit_x, blit_y))
