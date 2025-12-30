@@ -1,41 +1,16 @@
+
 import threading
 import time
+import os
 import numpy as np
 import pygame
 import cv2
 from config import *
-import os
-
-# for use in windows testing
-import unittest
-from unittest.mock import patch, MagicMock
-
-
-# ============================
-# Bayer 4x4 (ordered dithering)
-# ============================
-
-BAYER_4x4 = (1 / 17) * np.array([
-    [0,  8,  2, 10],
-    [12, 4, 14, 6],
-    [3, 11, 1,  9],
-    [15, 7, 13, 5]
-], dtype=np.float32)
-
-# ============================
-# Shared state
-# ============================
+from dummyCam import *  # Ensure dummyCamera2 is imported for fallback
 
 latest_luma = None
 frame_lock = threading.Lock()
 running = True
-import threading
-import time
-import numpy as np
-import pygame
-import cv2
-from config import *
-
 
 # Attempt to import Picamera2; provide a Dummy fallback for Windows/testing
 try:
@@ -52,60 +27,6 @@ BAYER_4x4 = (1 / 17) * np.array([
     [3, 11, 1,  9],
     [15, 7, 13, 5]
 ], dtype=np.float32)
-
-
-class DummyRequest:
-    def __init__(self, arr):
-        self._arr = arr
-
-    def make_array(self, key):
-        return self._arr
-
-    def release(self):
-        return
-
-
-class DummyPicamera2:
-    def __init__(self):
-        self._running = False
-        self.test_img = None
-        # try to load a test image from the script directory
-        try:
-            base = os.path.dirname(__file__)
-            path = os.path.join(base, 'test_img02.jpg')
-            if os.path.exists(path):
-                img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-                if img is not None:
-                    self.test_img = cv2.resize(img, (CAM_W, CAM_H), interpolation=cv2.INTER_AREA)
-                    print(f"Loaded test image from {path} for DummyPicamera2.")
-        except Exception:
-            self.test_img = None
-
-    def create_video_configuration(self, *args, **kwargs):
-        return {}
-
-    def configure(self, cfg):
-        return
-
-    def start(self):
-        self._running = True
-
-    def stop(self):
-        self._running = False
-
-    def set_controls(self, controls):
-        return
-
-    def capture_request(self):
-        # If a test image is available, return it (keeps static preview)
-        if self.test_img is not None:
-            return DummyRequest(self.test_img.copy())
-
-        # otherwise produce a synthetic luma frame so preview works on non-camera systems
-        t = int((time.time() * 1000) % 256)
-        arr = np.full((CAM_H, CAM_W), t, dtype=np.uint8)
-        return DummyRequest(arr)
-
 
 class Application:
     def __init__(self):
@@ -233,7 +154,7 @@ class Application:
     # Preview + UI loop
     def preview_loop(self):
         pygame.init()
-        screen = pygame.display.set_mode((WINDOW_W, WINDOW_H))
+        screen = pygame.display.set_mode((WINDOW_W, WINDOW_H), pygame.RESIZABLE)
         pygame.display.set_caption("Camera + Inverted Mask Preview")
         clock = pygame.time.Clock()
 
@@ -241,6 +162,19 @@ class Application:
         exposure_rect = cutoff_rect = dither_rect = pygame.Rect(0, 0, 0, 0)
 
         while self.running:
+            # compute window-relative layout so image stack stays left and sliders sit to the right
+            win_w, win_h = screen.get_size()
+            slider_panel_w = SLIDER_W + 40
+            max_image_w = max(100, win_w - slider_panel_w - 20)
+            combined_aspect = CAM_W / (CAM_H * 2)
+            target_w = min(max_image_w, int(win_h * combined_aspect))
+            if target_w < 1:
+                target_w = 1
+            target_h = max(1, int(target_w / combined_aspect))
+            blit_x = 10
+            blit_y = max(0, (win_h - target_h) // 2)
+            slider_x = blit_x + target_w + 20
+
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.running = False
@@ -260,7 +194,7 @@ class Application:
 
                 elif event.type == pygame.MOUSEMOTION and active_slider:
                     mx, _ = event.pos
-                    t = np.clip((mx - SLIDER_X) / SLIDER_W, 0, 1)
+                    t = np.clip((mx - slider_x) / SLIDER_W, 0, 1)
 
                     match active_slider:
                         case "exposure":
@@ -294,24 +228,32 @@ class Application:
                 (CAM_W, CAM_H)
             )
 
-            screen.fill((0, 0, 0))
-            screen.blit(cam_surf, (0, 0))
-            screen.blit(mask_surf, (0, CAM_H))
+            # Composite camera and mask into a single surface and scale to the computed image area
+            combined = pygame.Surface((CAM_W, CAM_H * 2))
+            combined.blit(cam_surf, (0, 0))
+            combined.blit(mask_surf, (0, CAM_H))
 
+            scaled = pygame.transform.smoothscale(combined, (target_w, target_h))
+            screen.fill((0, 0, 0))
+            screen.blit(scaled, (blit_x, blit_y))
+
+            # place sliders vertically to the right of the image stack
+            slider_y0 = blit_y + 20
+            spacing = 44
             exposure_rect = self.draw_slider(
-                screen, SLIDER_X, SLIDER_Y_EXPOSURE,
+                screen, slider_x, slider_y0,
                 SLIDER_W, SLIDER_H,
                 self.exposure_us, 500, 6000, "Exposure (us)"
             )
 
             cutoff_rect = self.draw_slider(
-                screen, SLIDER_X, SLIDER_Y_CUTOFF,
+                screen, slider_x, slider_y0 + spacing,
                 SLIDER_W, SLIDER_H,
                 self.mask_cutoff, 0, 255, "Mask Cutoff"
             )
 
             dither_rect = self.draw_slider(
-                screen, SLIDER_X, SLIDER_Y_DITHER,
+                screen, slider_x, slider_y0 + spacing * 2,
                 SLIDER_W, SLIDER_H,
                 self.dither_enable, 0, 1, "Dithering"
             )
@@ -342,7 +284,7 @@ class Application:
 
         try:
             base = os.path.dirname(__file__)
-            path = os.path.join(base, 'test_img02.jpg')
+            path = os.path.join(base, 'preview/test_img02.jpg')
             if os.path.exists(path):
                 img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
                 if img is not None:
@@ -354,8 +296,7 @@ class Application:
             pass
 
         # final fallback: synthetic gradient-like frame
-        t = int((time.time() * 1000) % 256)
-        arr = np.full((CAM_H, CAM_W), t, dtype=np.uint8)
+        arr = np.full((CAM_H, CAM_W), 128, dtype=np.uint8)
         self._test_img = arr
         return self._test_img
 
