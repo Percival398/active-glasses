@@ -4,6 +4,7 @@ import numpy as np
 import pygame
 import cv2
 from config import *
+import os
 
 # for use in windows testing
 import unittest
@@ -67,6 +68,18 @@ class DummyRequest:
 class DummyPicamera2:
     def __init__(self):
         self._running = False
+        self.test_img = None
+        # try to load a test image from the script directory
+        try:
+            base = os.path.dirname(__file__)
+            path = os.path.join(base, 'test_img02.jpg')
+            if os.path.exists(path):
+                img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+                if img is not None:
+                    self.test_img = cv2.resize(img, (CAM_W, CAM_H), interpolation=cv2.INTER_AREA)
+                    print(f"Loaded test image from {path} for DummyPicamera2.")
+        except Exception:
+            self.test_img = None
 
     def create_video_configuration(self, *args, **kwargs):
         return {}
@@ -84,7 +97,11 @@ class DummyPicamera2:
         return
 
     def capture_request(self):
-        # produce a synthetic luma frame so preview works on non-camera systems
+        # If a test image is available, return it (keeps static preview)
+        if self.test_img is not None:
+            return DummyRequest(self.test_img.copy())
+
+        # otherwise produce a synthetic luma frame so preview works on non-camera systems
         t = int((time.time() * 1000) % 256)
         arr = np.full((CAM_H, CAM_W), t, dtype=np.uint8)
         return DummyRequest(arr)
@@ -124,14 +141,45 @@ class Application:
             pass
 
         self.picam2.start()
+        self._test_img = None
 
     # Camera capture loop
     def _camera_loop(self):
         while self.running:
-            request = self.picam2.capture_request()
+            try:
+                request = self.picam2.capture_request()
+            except Exception:
+                # camera not working; use test image fallback
+                y_plane = self._load_test_image()
+                if y_plane is not None:
+                    with self.frame_lock:
+                        self.latest_luma = y_plane
+                time.sleep(0.01)
+                continue
+
             try:
                 frame = request.make_array("main")
-                y_plane = frame[:CAM_H, :CAM_W]
+            except Exception:
+                try:
+                    request.release()
+                except Exception:
+                    pass
+                y_plane = self._load_test_image()
+                if y_plane is not None:
+                    with self.frame_lock:
+                        self.latest_luma = y_plane
+                time.sleep(0.01)
+                continue
+
+            try:
+                # camera frame may be color; ensure we keep luma
+                if frame is None:
+                    y_plane = self._load_test_image()
+                elif frame.ndim == 3 and frame.shape[2] == 3:
+                    y_plane = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                else:
+                    y_plane = frame[:CAM_H, :CAM_W]
+
                 with self.frame_lock:
                     self.latest_luma = y_plane
             finally:
@@ -214,21 +262,20 @@ class Application:
                     mx, _ = event.pos
                     t = np.clip((mx - SLIDER_X) / SLIDER_W, 0, 1)
 
-                    if active_slider == "exposure":
-                        self.exposure_us = int(500 + t * 5500)
-                        try:
-                            self.picam2.set_controls({
-                                "AeEnable": False,
-                                "ExposureTime": self.exposure_us
-                            })
-                        except Exception:
-                            pass
-
-                    elif active_slider == "cutoff":
-                        self.mask_cutoff = int(t * 255)
-
-                    elif active_slider == "dither":
-                        self.dither_enable = 1 if t > 0.5 else 0
+                    match active_slider:
+                        case "exposure":
+                            self.exposure_us = int(500 + t * 5500)
+                            try:
+                                self.picam2.set_controls({
+                                    "AeEnable": False,
+                                    "ExposureTime": self.exposure_us
+                                })
+                            except Exception:
+                                pass
+                        case "cutoff":
+                            self.mask_cutoff = int(t * 255)
+                        case "dither":
+                            self.dither_enable = 1 if t > 0.5 else 0
 
             with self.frame_lock:
                 if self.latest_luma is None:
@@ -287,6 +334,30 @@ class Application:
             self.picam2.stop()
         except Exception:
             pass
+
+    def _load_test_image(self):
+        # cached load of test image from disk (grayscale)
+        if self._test_img is not None:
+            return self._test_img
+
+        try:
+            base = os.path.dirname(__file__)
+            path = os.path.join(base, 'test_img02.jpg')
+            if os.path.exists(path):
+                img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+                if img is not None:
+                    img = cv2.resize(img, (CAM_W, CAM_H), interpolation=cv2.INTER_AREA)
+                    self._test_img = img
+                    print(f"Loaded test image from {path} for fallback.")
+                    return self._test_img
+        except Exception:
+            pass
+
+        # final fallback: synthetic gradient-like frame
+        t = int((time.time() * 1000) % 256)
+        arr = np.full((CAM_H, CAM_W), t, dtype=np.uint8)
+        self._test_img = arr
+        return self._test_img
 
 
 def main():
