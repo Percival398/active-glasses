@@ -17,3 +17,17 @@ SLIDER_H = 10
 SLIDER_Y_EXPOSURE = CAM_H * 2 + 25
 SLIDER_Y_CUTOFF   = CAM_H * 2 + 60
 SLIDER_Y_DITHER   = CAM_H * 2 + 95
+
+# Sliders
+SLIDERS = [
+    {"key": "exposure_us",  "label": "Exposure (us)", "min": 500,  "max": 6000, "step": 1,  "default": 3000, "type": "int",
+        "action": {"target": "picam2", "method": "set_controls", "param": "ExposureTime"}},
+    {"key": "mask_cutoff",  "label": "Mask Cutoff",   "min": 0,    "max": 255,  "step": 1,  "default": 120,  "type": "int"},
+    {"key": "dither_enable","label": "Dithering",     "min": 0,    "max": 1,    "step": 1,  "default": 0,    "type": "bool"},
+    {"key": "denoise_h",    "label": "Denoise H",     "min": 0.0,  "max": 30.0, "step": 0.1,"default": 6.0,  "type": "float",
+        "action": {"target": "mask", "method": "fastNlMeansDenoising", "arg": "h"}},
+    {"key": "expand_px",    "label": "Edge Grow",     "min": 0,    "max": 24,   "step": 1,  "default": 0,    "type": "int",
+        "action": {"target": "mask", "method": "erode", "arg": "kernel_radius"}},
+    {"key": "post_blur",    "label": "Post Blur",     "min": 0.0,  "max": 25.0, "step": 0.1,"default": 0.0,  "type": "float",
+        "action": {"target": "mask", "method": "gaussian_blur", "arg": "radius"}},
+]

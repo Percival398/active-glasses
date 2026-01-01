@@ -35,14 +35,14 @@ class Application:
         self.frame_lock = threading.Lock()
         self.running = True
 
-        # UI-controlled parameters
-        self.exposure_us = 3000
-        self.mask_cutoff = 120
-        self.dither_enable = 0
-        # New mask-processing parameters
-        self.denoise_h = 6.0            # NL-means filter strength (0 = off)
-        self.expand_px = 0              # morphological expansion in pixels
-        self.post_blur = 0.0            # gaussian blur kernel radius (0 = off)
+        # UI-controlled parameters driven from `SLIDERS` in config.py
+        self.slider_defs = SLIDERS
+        # initialize attributes from slider defaults
+        for s in self.slider_defs:
+            setattr(self, s['key'], s.get('default'))
+        # quick lookup and runtime UI rects
+        self.slider_map = {s['key']: s for s in self.slider_defs}
+        self.slider_rects = {}
 
         # Camera
         self.picam2 = Picamera2() if Picamera2 is not None else DummyPicamera2()
@@ -199,7 +199,6 @@ class Application:
             font_small = pygame.font.SysFont(None, self._mono_font_size)
 
         active_slider = None
-        exposure_rect = cutoff_rect = dither_rect = denoise_rect = expand_rect = blur_rect = pygame.Rect(0, 0, 0, 0)
 
         while self.running:
             # record preview-loop timing for a short moving average used to estimate frame time/fps
@@ -233,18 +232,10 @@ class Application:
 
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     mx, my = event.pos
-                    if exposure_rect.collidepoint(mx, my):
-                        active_slider = "exposure"
-                    elif cutoff_rect.collidepoint(mx, my):
-                        active_slider = "cutoff"
-                    elif dither_rect.collidepoint(mx, my):
-                        active_slider = "dither"
-                    elif denoise_rect.collidepoint(mx, my):
-                        active_slider = "denoise"
-                    elif expand_rect.collidepoint(mx, my):
-                        active_slider = "expand"
-                    elif blur_rect.collidepoint(mx, my):
-                        active_slider = "blur"
+                    for key, rect in self.slider_rects.items():
+                        if rect.collidepoint(mx, my):
+                            active_slider = key
+                            break
 
                 elif event.type == pygame.MOUSEBUTTONUP:
                     active_slider = None
@@ -252,30 +243,38 @@ class Application:
                 elif event.type == pygame.MOUSEMOTION and active_slider:
                     mx, _ = event.pos
                     t = np.clip((mx - slider_x) / SLIDER_W, 0, 1)
+                    s = self.slider_map.get(active_slider)
+                    if not s:
+                        continue
+                    min_v = s['min']
+                    max_v = s['max']
+                    typ = s.get('type', 'int')
+                    if typ == 'int':
+                        val = int(round(min_v + t * (max_v - min_v)))
+                    elif typ == 'float':
+                        step = s.get('step', 0.1)
+                        raw = min_v + t * (max_v - min_v)
+                        # snap to step
+                        val = round(raw / step) * step
+                    elif typ == 'bool':
+                        val = 1 if t > 0.5 else 0
+                    else:
+                        val = min_v + t * (max_v - min_v)
 
-                    match active_slider:
-                        case "exposure":
-                            self.exposure_us = int(500 + t * 5500)
-                            try:
-                                self.picam2.set_controls({
-                                    "AeEnable": False,
-                                    "ExposureTime": self.exposure_us
-                                })
-                            except Exception:
-                                pass
-                        case "cutoff":
-                            self.mask_cutoff = int(t * 255)
-                        case "dither":
-                            self.dither_enable = 1 if t > 0.5 else 0
-                        case "denoise":
-                            # map t -> 0..30
-                            self.denoise_h = float(t * 30.0)
-                        case "expand":
-                            # map t -> 0..24 px
-                            self.expand_px = int(t * 24)
-                        case "blur":
-                            # map t -> 0..25 px gaussian kernel radius
-                            self.post_blur = float(t * 25.0)
+                    setattr(self, active_slider, val)
+                    # run immediate action for camera controls if configured
+                    action = s.get('action')
+                    if action and action.get('target') == 'picam2' and hasattr(self, 'picam2'):
+                        try:
+                            param = action.get('param', 'ExposureTime')
+                            # integer controls expected for exposure
+                            ctrl_val = int(val) if isinstance(val, (int, float)) else val
+                            self.picam2.set_controls({
+                                "AeEnable": False,
+                                param: ctrl_val
+                            })
+                        except Exception:
+                            pass
 
             with self.frame_lock:
                 if self.latest_luma is None:
@@ -416,44 +415,14 @@ class Application:
             screen.fill((0, 0, 0))
             screen.blit(scaled, (blit_x, blit_y))
 
-            # place sliders vertically to the right of the image stack
+            # place sliders vertically to the right of the image stack (driven by `SLIDERS`)
             slider_y0 = blit_y + 20
             spacing = 44
-            exposure_rect = self.draw_slider(
-                screen, slider_x, slider_y0,
-                SLIDER_W, SLIDER_H,
-                self.exposure_us, 500, 6000, "Exposure (us)"
-            )
-
-            cutoff_rect = self.draw_slider(
-                screen, slider_x, slider_y0 + spacing,
-                SLIDER_W, SLIDER_H,
-                self.mask_cutoff, 0, 255, "Mask Cutoff"
-            )
-
-            dither_rect = self.draw_slider(
-                screen, slider_x, slider_y0 + spacing * 2,
-                SLIDER_W, SLIDER_H,
-                self.dither_enable, 0, 1, "Dithering"
-            )
-
-            denoise_rect = self.draw_slider(
-                screen, slider_x, slider_y0 + spacing * 3,
-                SLIDER_W, SLIDER_H,
-                self.denoise_h, 0.0, 30.0, "Denoise H"
-            )
-
-            expand_rect = self.draw_slider(
-                screen, slider_x, slider_y0 + spacing * 4,
-                SLIDER_W, SLIDER_H,
-                self.expand_px, 0, 24, "Edge Grow"
-            )
-
-            blur_rect = self.draw_slider(
-                screen, slider_x, slider_y0 + spacing * 5,
-                SLIDER_W, SLIDER_H,
-                self.post_blur, 0.0, 25.0, "Post Blur"
-            )
+            for i, s in enumerate(self.slider_defs):
+                y = slider_y0 + spacing * i
+                val = getattr(self, s['key'])
+                rect = self.draw_slider(screen, slider_x, y, SLIDER_W, SLIDER_H, val, s['min'], s['max'], s['label'])
+                self.slider_rects[s['key']] = rect
 
             pygame.display.flip()
             clock.tick(PREVIEW_FPS)
