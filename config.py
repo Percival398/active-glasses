@@ -1,4 +1,4 @@
-CAM_W, CAM_H = 640, 400
+CAM_W, CAM_H = 320, 240
 CAM_FPS = 60
 
 LCD_W, LCD_H = 320, 240
@@ -24,7 +24,7 @@ SLIDERS = [
         "action": {"target": "picam2", "method": "set_controls", "param": "ExposureTime"}},
     {"key": "mask_cutoff",  "label": "Mask Cutoff",   "min": 0,    "max": 255,  "step": 1,  "default": 120,  "type": "int"},
     {"key": "dither_enable","label": "Dithering",     "min": 0,    "max": 1,    "step": 1,  "default": 0,    "type": "bool"},
-    {"key": "denoise_h",    "label": "Denoise H",     "min": 0.0,  "max": 30.0, "step": 0.1,"default": 6.0,  "type": "float",
+    {"key": "denoise_h",    "label": "Denoise",     "min": 0.0,  "max": 30.0, "step": 0.1,"default": 0,  "type": "float",
         "action": {"target": "mask", "method": "fastNlMeansDenoising", "arg": "h"}},
     {"key": "expand_px",    "label": "Edge Grow",     "min": 0,    "max": 24,   "step": 1,  "default": 0,    "type": "int",
         "action": {"target": "mask", "method": "erode", "arg": "kernel_radius"}},

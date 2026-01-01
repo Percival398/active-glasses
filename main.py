@@ -1,4 +1,5 @@
 
+import contextlib
 import threading
 import time
 import os
@@ -7,6 +8,7 @@ import pygame
 import cv2
 from config import *
 from dummyCam import *  # Ensure dummyCamera2 is imported for fallback
+from preview.preview import preview_loop as external_preview_loop
 
 latest_luma = None
 frame_lock = threading.Lock()
@@ -14,7 +16,7 @@ running = True
 
 # Attempt to import Picamera2; provide a Dummy fallback for Windows/testing
 try:
-    from picamera2 import Picamera2
+    from picamera2 import Picamera2 # type: ignore
 except Exception as e:
     Picamera2 = None
     print("picamera2 not found — using DummyPicamera2 fallback (Windows/testing).")
@@ -46,7 +48,7 @@ class Application:
 
         # Camera
         self.picam2 = Picamera2() if Picamera2 is not None else DummyPicamera2()
-        try:
+        with contextlib.suppress(Exception):
             self.picam2.configure(
                 self.picam2.create_video_configuration(
                     main={
@@ -61,10 +63,6 @@ class Application:
                     }
                 )
             )
-        except Exception:
-            # Some dummy/config objects may not accept configure; ignore non-fatal errors
-            pass
-
         self.picam2.start()
         self._test_img = None
         # preview timing history for estimating frame time / fps
@@ -98,10 +96,8 @@ class Application:
             try:
                 frame = request.make_array("main")
             except Exception:
-                try:
+                with contextlib.suppress(Exception):
                     request.release()
-                except Exception:
-                    pass
                 y_plane = self._load_test_image()
                 if y_plane is not None:
                     with self.frame_lock:
@@ -121,10 +117,8 @@ class Application:
                 with self.frame_lock:
                     self.latest_luma = y_plane
             finally:
-                try:
+                with contextlib.suppress(Exception):
                     request.release()
-                except Exception:
-                    pass
 
     # LCD processing loop (keeps timing to camera FPS)
     def _lcd_loop(self):
@@ -175,10 +169,7 @@ class Application:
         # nicely format numeric value (show one decimal when fractional)
         try:
             fv = float(value)
-            if fv.is_integer():
-                vs = f"{int(fv)}"
-            else:
-                vs = f"{fv:.1f}"
+            vs = f"{int(fv)}" if fv.is_integer() else f"{fv:.1f}"
         except Exception:
             vs = str(value)
         text = font.render(f"{label}: {vs}", True, (255, 255, 255))
@@ -187,247 +178,9 @@ class Application:
         return track
 
     # Preview + UI loop
+    # Preview loop delegated to external preview module
     def preview_loop(self):
-        pygame.init()
-        screen = pygame.display.set_mode((WINDOW_W, WINDOW_H), pygame.RESIZABLE)
-        pygame.display.set_caption("Camera + Inverted Mask Preview")
-        clock = pygame.time.Clock()
-        # create monospace fonts once to avoid per-frame allocations
-        try:
-            font_small = pygame.font.SysFont(self._mono_font_name, self._mono_font_size)
-        except Exception:
-            font_small = pygame.font.SysFont(None, self._mono_font_size)
-
-        active_slider = None
-
-        while self.running:
-            # record preview-loop timing for a short moving average used to estimate frame time/fps
-            now = time.perf_counter()
-            if self._preview_prev_time is None:
-                dt = 1.0 / CAM_FPS
-            else:
-                dt = now - self._preview_prev_time
-            self._preview_prev_time = now
-            self._preview_time_hist.append(dt)
-            if len(self._preview_time_hist) > 32:
-                self._preview_time_hist.pop(0)
-
-            # compute window-relative layout so image stack stays left and sliders sit to the right
-            win_w, win_h = screen.get_size()
-            slider_panel_w = SLIDER_W + 40
-            max_image_w = max(100, win_w - slider_panel_w - 20)
-            combined_aspect = CAM_W / (CAM_H * 2)
-            target_w = min(max_image_w, int(win_h * combined_aspect))
-            if target_w < 1:
-                target_w = 1
-            target_h = max(1, int(target_w / combined_aspect))
-            blit_x = 10
-            blit_y = max(0, (win_h - target_h) // 2)
-            slider_x = blit_x + target_w + 20
-
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    self.running = False
-                    return
-
-                elif event.type == pygame.MOUSEBUTTONDOWN:
-                    mx, my = event.pos
-                    for key, rect in self.slider_rects.items():
-                        if rect.collidepoint(mx, my):
-                            active_slider = key
-                            break
-
-                elif event.type == pygame.MOUSEBUTTONUP:
-                    active_slider = None
-
-                elif event.type == pygame.MOUSEMOTION and active_slider:
-                    mx, _ = event.pos
-                    t = np.clip((mx - slider_x) / SLIDER_W, 0, 1)
-                    s = self.slider_map.get(active_slider)
-                    if not s:
-                        continue
-                    min_v = s['min']
-                    max_v = s['max']
-                    typ = s.get('type', 'int')
-                    if typ == 'int':
-                        val = int(round(min_v + t * (max_v - min_v)))
-                    elif typ == 'float':
-                        step = s.get('step', 0.1)
-                        raw = min_v + t * (max_v - min_v)
-                        # snap to step
-                        val = round(raw / step) * step
-                    elif typ == 'bool':
-                        val = 1 if t > 0.5 else 0
-                    else:
-                        val = min_v + t * (max_v - min_v)
-
-                    setattr(self, active_slider, val)
-                    # run immediate action for camera controls if configured
-                    action = s.get('action')
-                    if action and action.get('target') == 'picam2' and hasattr(self, 'picam2'):
-                        try:
-                            param = action.get('param', 'ExposureTime')
-                            # integer controls expected for exposure
-                            ctrl_val = int(val) if isinstance(val, (int, float)) else val
-                            self.picam2.set_controls({
-                                "AeEnable": False,
-                                param: ctrl_val
-                            })
-                        except Exception:
-                            pass
-
-            with self.frame_lock:
-                if self.latest_luma is None:
-                    time.sleep(0.001)
-                    continue
-                frame = self.latest_luma.copy()
-
-            # reuse preallocated RGB buffer to reduce allocations
-            try:
-                self._cam_rgb_buf[..., 0] = frame
-                self._cam_rgb_buf[..., 1] = frame
-                self._cam_rgb_buf[..., 2] = frame
-                cam_surf = pygame.surfarray.make_surface(np.rot90(self._cam_rgb_buf))
-            except Exception:
-                cam_rgb = np.stack([frame] * 3, axis=-1)
-                cam_surf = pygame.surfarray.make_surface(np.rot90(cam_rgb))
-
-            lcd_luma = cv2.resize(frame, (LCD_W, LCD_H), interpolation=cv2.INTER_AREA)
-            # initial binary mask from threshold (use OpenCV threshold for speed)
-            try:
-                _, mask = cv2.threshold(lcd_luma, int(self.mask_cutoff), 255, cv2.THRESH_BINARY_INV)
-            except Exception:
-                mask = (lcd_luma <= self.mask_cutoff).astype(np.uint8) * 255
-
-            # 1) optional denoise on mask (helps remove speckle). use NL-means on 8-bit mask
-            if getattr(self, 'denoise_h', 0) and self.denoise_h > 0.0:
-                try:
-                    den = cv2.fastNlMeansDenoising(mask, None, h=float(self.denoise_h), templateWindowSize=7, searchWindowSize=21)
-                    mask = den
-                except Exception:
-                    # fallback: small median blur
-                    mask = cv2.medianBlur(mask, 3)
-
-            # 2) shrink mask edges by morphological erosion (was dilation)
-            if getattr(self, 'expand_px', 0) and self.expand_px > 0:
-                k = max(1, int(self.expand_px))
-                kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * k + 1, 2 * k + 1))
-                mask = cv2.erode(mask, kern, iterations=1)
-
-            # 3) optional post-expansion blur to smooth transition into white
-            if getattr(self, 'post_blur', 0) and self.post_blur > 0.0:
-                # kernel size must be odd; derive from radius
-                radius = int(max(0, round(self.post_blur)))
-                ksize = radius * 2 + 1
-                if ksize > 1:
-                    try:
-                        mask = cv2.GaussianBlur(mask, (ksize, ksize), 0)
-                    except Exception:
-                        pass
-            # fill reusable RGB mask buffer and make surface (then scale to CAM size)
-            try:
-                self._mask_rgb[..., 0] = mask
-                self._mask_rgb[..., 1] = mask
-                self._mask_rgb[..., 2] = mask
-                mask_surf = pygame.transform.scale(
-                    pygame.surfarray.make_surface(np.rot90(self._mask_rgb)),
-                    (CAM_W, CAM_H)
-                )
-            except Exception:
-                mask_rgb = np.stack([mask] * 3, axis=-1)
-                mask_surf = pygame.transform.scale(
-                    pygame.surfarray.make_surface(np.rot90(mask_rgb)),
-                    (CAM_W, CAM_H)
-                )
-
-            # Composite camera and mask into a single surface and scale to the computed image area
-            combined = pygame.Surface((CAM_W, CAM_H * 2))
-            combined.blit(cam_surf, (0, 0))
-            combined.blit(mask_surf, (0, CAM_H))
-
-            # Draw labels for the two preview frames (bottom-left of each frame)
-            try:
-                simulated = isinstance(self.picam2, DummyPicamera2)
-            except Exception:
-                simulated = False
-
-            top_label = "Camera (simulated)" if simulated else "Camera"
-            bottom_label = "LCD output"
-
-            # Use monospace font for labels/timing to keep box widths stable
-            font = font_small
-
-            # Helper to draw a label with a semi-transparent black box
-            # If fixed_w is provided, the background box will use that width
-            def draw_label(surface, text, x, y, padding=6, alpha=160, fixed_w=None):
-                txt = font.render(text, True, (255, 255, 255))
-                w, h = txt.get_width(), txt.get_height()
-                box_w = (fixed_w if fixed_w is not None else w) + padding * 2
-                bg = pygame.Surface((box_w, h + padding * 2), pygame.SRCALPHA)
-                bg.fill((0, 0, 0, alpha))
-                surface.blit(bg, (x - padding, y - padding))
-                # draw text left-aligned within the fixed box
-                surface.blit(txt, (x, y))
-
-            margin = 6
-
-            # Top frame bottom-left (inside the top frame)
-            txt_top = top_label
-            top_x = margin
-            top_y = CAM_H - font.get_height() - margin
-            # compute fixed width for frame labels (use the longest possible label)
-            max_label_text = "Camera (simulated)"
-            label_fixed_w = font.size(max_label_text)[0]
-            draw_label(combined, txt_top, top_x, top_y, fixed_w=label_fixed_w)
-
-            # Bottom frame bottom-left (inside the bottom frame)
-            txt_bot = bottom_label
-            bot_x = margin
-            bot_y = CAM_H * 2 - font.get_height() - margin
-            draw_label(combined, txt_bot, bot_x, bot_y, fixed_w=label_fixed_w)
-
-            # Bottom frame bottom-right: estimated frame time and fps (moving average)
-            if len(self._preview_time_hist) > 0:
-                avg = sum(self._preview_time_hist) / len(self._preview_time_hist)
-            else:
-                avg = 1.0 / CAM_FPS
-            microsec = avg * 1e3
-            fps = int(round(1.0 / avg)) if avg > 0 else 0
-            ft = f"{microsec:5.1f}ms ({fps:03d} fps)"
-
-            # Render timing text using a fixed-width background so it doesn't resize
-            sample = f"{9999999.9:07.1f}us ({999:03d} fps)"
-            fixed_w = font.size(sample)[0]
-            txt = font.render(ft, True, (255, 255, 255))
-            h = txt.get_height()
-            padding = 6
-            alpha = 160
-            tx = CAM_W - margin - fixed_w
-            ty = CAM_H * 2 - h - margin
-            bg = pygame.Surface((fixed_w + padding * 2, h + padding * 2), pygame.SRCALPHA)
-            bg.fill((0, 0, 0, alpha))
-            combined.blit(bg, (tx - padding, ty - padding))
-            # right-align the actual text inside the fixed box
-            text_x = tx + (fixed_w - txt.get_width())
-            combined.blit(txt, (text_x, ty))
-
-            scaled = pygame.transform.smoothscale(combined, (target_w, target_h))
-            screen.fill((0, 0, 0))
-            screen.blit(scaled, (blit_x, blit_y))
-
-            # place sliders vertically to the right of the image stack (driven by `SLIDERS`)
-            slider_y0 = blit_y + 20
-            spacing = 44
-            for i, s in enumerate(self.slider_defs):
-                y = slider_y0 + spacing * i
-                val = getattr(self, s['key'])
-                rect = self.draw_slider(screen, slider_x, y, SLIDER_W, SLIDER_H, val, s['min'], s['max'], s['label'])
-                self.slider_rects[s['key']] = rect
-
-            pygame.display.flip()
-            clock.tick(PREVIEW_FPS)
-
-        pygame.quit()
+        return external_preview_loop(self)
 
     def start(self):
         self._camera_thread = threading.Thread(target=self._camera_loop, daemon=True)
@@ -438,17 +191,15 @@ class Application:
     def stop(self):
         self.running = False
         time.sleep(0.1)
-        try:
+        with contextlib.suppress(Exception):
             self.picam2.stop()
-        except Exception:
-            pass
 
     def _load_test_image(self):
         # cached load of test image from disk (grayscale)
         if self._test_img is not None:
             return self._test_img
 
-        try:
+        with contextlib.suppress(Exception):
             base = os.path.dirname(__file__)
             path = os.path.join(base, 'preview/test_img02.jpg')
             if os.path.exists(path):
@@ -458,9 +209,6 @@ class Application:
                     self._test_img = img
                     print(f"Loaded test image from {path} for fallback.")
                     return self._test_img
-        except Exception:
-            pass
-
         # final fallback: synthetic gradient-like frame
         arr = np.full((CAM_H, CAM_W), 128, dtype=np.uint8)
         self._test_img = arr
