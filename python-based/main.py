@@ -32,7 +32,7 @@ BAYER_4x4 = (1 / 17) * np.array([
 ], dtype=np.float32)
 
 class Application:
-    def __init__(self, mask_only=True):
+    def __init__(self, mask_only=False):
         # Shared state
         self.latest_luma = None
         self.frame_lock = threading.Lock()
