@@ -1,5 +1,6 @@
 
 import contextlib
+import argparse
 import threading
 import time
 import os
@@ -31,11 +32,14 @@ BAYER_4x4 = (1 / 17) * np.array([
 ], dtype=np.float32)
 
 class Application:
-    def __init__(self):
+    def __init__(self, mask_only=True):
         # Shared state
         self.latest_luma = None
         self.frame_lock = threading.Lock()
         self.running = True
+
+        # Mask-only mode (display only mask, no labels/sliders)
+        self.mask_only = mask_only
 
         # UI-controlled parameters driven from `SLIDERS` in config.py
         self.slider_defs = SLIDERS
@@ -216,7 +220,11 @@ class Application:
 
 
 def main():
-    app = Application()
+    parser = argparse.ArgumentParser(description="Active glasses preview")
+    parser.add_argument('--mask-only', action='store_true', help='Show only mask window (no labels/sliders) in fullscreen')
+    args = parser.parse_args()
+
+    app = Application(mask_only=args.mask_only)
     try:
         app.start()
         app.preview_loop()

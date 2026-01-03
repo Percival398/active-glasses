@@ -33,8 +33,14 @@ def draw_slider(app, screen, x, y, w, h, value, min_v, max_v, label):
 
 def preview_loop(app):
     pygame.init()
-    screen = pygame.display.set_mode((WINDOW_W, WINDOW_H), pygame.RESIZABLE)
-    pygame.display.set_caption("Camera + Inverted Mask Preview")
+    # If mask-only mode requested, open a fullscreen window; otherwise a resizable window
+    if getattr(app, 'mask_only', False):
+        info = pygame.display.Info()
+        screen = pygame.display.set_mode((info.current_w, info.current_h), pygame.FULLSCREEN)
+        pygame.display.set_caption("Mask Preview (fullscreen)")
+    else:
+        screen = pygame.display.set_mode((WINDOW_W, WINDOW_H), pygame.RESIZABLE)
+        pygame.display.set_caption("Camera + Inverted Mask Preview")
     clock = pygame.time.Clock()
     try:
         font_small = pygame.font.SysFont(app._mono_font_name, app._mono_font_size)
@@ -165,9 +171,32 @@ def preview_loop(app):
                 (CAM_W, CAM_H)
             )
 
+        # Normal combined view (camera above, mask below)
         combined = pygame.Surface((CAM_W, CAM_H * 2))
         combined.blit(cam_surf, (0, 0))
         combined.blit(mask_surf, (0, CAM_H))
+
+        # If mask-only mode, present only the mask in fullscreen at a logical 320x240
+        if getattr(app, 'mask_only', False):
+            try:
+                # scale mask to logical 320x240 then scale to screen resolution
+                mask_small = pygame.transform.smoothscale(mask_surf, (320, 240))
+                screen_w, screen_h = screen.get_size()
+                full_scaled = pygame.transform.smoothscale(mask_small, (screen_w, screen_h))
+                screen.fill((0, 0, 0))
+                screen.blit(full_scaled, (0, 0))
+                pygame.display.flip()
+                clock.tick(PREVIEW_FPS)
+                continue
+            except Exception:
+                # fallback: just blit the mask_surf scaled to screen
+                screen_w, screen_h = screen.get_size()
+                full_scaled = pygame.transform.smoothscale(mask_surf, (screen_w, screen_h))
+                screen.fill((0, 0, 0))
+                screen.blit(full_scaled, (0, 0))
+                pygame.display.flip()
+                clock.tick(PREVIEW_FPS)
+                continue
 
         try:
             simulated = isinstance(app.picam2, DummyPicamera2)
