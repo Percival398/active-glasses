@@ -161,26 +161,6 @@ class Application:
             if sleep > 0:
                 time.sleep(sleep)
 
-    # UI helper for drawing a slider
-    def draw_slider(self, screen, x, y, w, h, value, min_v, max_v, label):
-        track = pygame.Rect(x, y, w, h)
-        pygame.draw.rect(screen, (90, 90, 90), track, border_radius=4)
-
-        t = (value - min_v) / (max_v - min_v)
-        knob_x = int(x + t * w)
-        pygame.draw.circle(screen, (230, 230, 230), (knob_x, y + h // 2), h)
-
-        font = pygame.font.SysFont(self._mono_font_name, 22)
-        # nicely format numeric value (show one decimal when fractional)
-        try:
-            fv = float(value)
-            vs = f"{int(fv)}" if fv.is_integer() else f"{fv:.1f}"
-        except Exception:
-            vs = str(value)
-        text = font.render(f"{label}: {vs}", True, (255, 255, 255))
-        screen.blit(text, (x, y - 18))
-
-        return track
 
     # Preview + UI loop
     # Preview loop delegated to external preview module
@@ -228,10 +208,12 @@ def main():
     parser.add_argument('--mask-only', action='store_true', help='Show only mask window (no labels/sliders) in fullscreen')
     args = parser.parse_args()
 
-    app = Application(mask_only=args.mask_only)
+    #app = Application(mask_only=args.mask_only)
+    app = Application(mask_only=True)
+
     try:
         app.start()
-        if args.mask_only: 
+        if app.mask_only == True: 
             app.lcd_loop()
         else:
             app.preview_loop()

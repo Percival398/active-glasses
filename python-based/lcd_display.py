@@ -1,4 +1,5 @@
 import contextlib
+import sys
 import time
 import numpy as np
 import pygame
@@ -16,7 +17,18 @@ def lcd_loop(app):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 app.running = False
-                return
+                pygame.quit()
+                sys.exit()
+
+            # Check for a key press
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    app.running = False
+                    pygame.quit()
+                    sys.exit()
+                    return
+
+                
         with app.frame_lock:
             if app.latest_luma is None:
                 time.sleep(0.001)
@@ -77,4 +89,4 @@ def lcd_loop(app):
         screen.blit(full_scaled, (0, 0))
         pygame.display.flip()
         
-pygame.quit()
+    pygame.quit()
