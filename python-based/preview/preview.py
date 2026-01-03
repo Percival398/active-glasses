@@ -40,6 +40,7 @@ def preview_loop(app):
         screen = pygame.display.set_mode((info.current_w, info.current_h), pygame.FULLSCREEN)
         pygame.display.set_caption("Mask Preview (fullscreen)")
     else:
+        info = pygame.display.Info()
         screen = pygame.display.set_mode((info.current_w, info.current_h), pygame.FULLSCREEN)
         pygame.display.set_caption("Camera + Inverted Mask Preview")
     clock = pygame.time.Clock()
