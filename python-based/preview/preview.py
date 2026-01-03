@@ -35,11 +35,12 @@ def preview_loop(app):
     pygame.init()
     # If mask-only mode requested, open a fullscreen window; otherwise a resizable window
     if getattr(app, 'mask_only', False):
+        print("mask_only set to false")
         info = pygame.display.Info()
         screen = pygame.display.set_mode((info.current_w, info.current_h), pygame.FULLSCREEN)
         pygame.display.set_caption("Mask Preview (fullscreen)")
     else:
-        screen = pygame.display.set_mode((WINDOW_W, WINDOW_H), pygame.RESIZABLE)
+        screen = pygame.display.set_mode((info.current_w, info.current_h), pygame.FULLSCREEN)
         pygame.display.set_caption("Camera + Inverted Mask Preview")
     clock = pygame.time.Clock()
     try:

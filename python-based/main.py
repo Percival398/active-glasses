@@ -33,6 +33,7 @@ BAYER_4x4 = (1 / 17) * np.array([
 
 class Application:
     def __init__(self, mask_only=False):
+        print("main.py: mask_only =", mask_only)
         # Shared state
         self.latest_luma = None
         self.frame_lock = threading.Lock()
