@@ -10,6 +10,7 @@ import cv2
 from config import *
 from dummyCam import *  # Ensure dummyCamera2 is imported for fallback
 from preview.preview import preview_loop as external_preview_loop
+from lcd_display import lcd_loop as external_lcd_loop
 
 latest_luma = None
 frame_lock = threading.Lock()
@@ -185,6 +186,9 @@ class Application:
     # Preview loop delegated to external preview module
     def preview_loop(self):
         return external_preview_loop(self)
+    
+    def lcd_loop(self):
+        return external_lcd_loop(self)
 
     def start(self):
         self._camera_thread = threading.Thread(target=self._camera_loop, daemon=True)
@@ -227,7 +231,10 @@ def main():
     app = Application(mask_only=args.mask_only)
     try:
         app.start()
-        app.preview_loop()
+        if args.mask_only: 
+            app.lcd_loop()
+        else:
+            app.preview_loop()
     finally:
         app.stop()
 

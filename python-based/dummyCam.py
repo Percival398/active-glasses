@@ -3,6 +3,7 @@
 import os
 import numpy as np  
 import cv2
+from config import *
 
 class DummyRequest:
     def __init__(self, arr):
