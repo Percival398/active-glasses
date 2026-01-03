@@ -51,7 +51,7 @@ class Application:
         self.slider_rects = {}
 
         # Camera
-        self.picam2 = Picamera2() if Picamera2 is not None else DummyPicamera2()
+        self.picam2 = DummyPicamera2()
         with contextlib.suppress(Exception):
             self.picam2.configure(
                 self.picam2.create_video_configuration(
