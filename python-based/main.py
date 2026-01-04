@@ -12,6 +12,9 @@ from dummyCam import *  # Ensure dummyCamera2 is imported for fallback
 from preview.preview import preview_loop as external_preview_loop
 from lcd_display import lcd_loop as external_lcd_loop
 
+# IMPORTANT: right now hard setting mask_only to True in main loop
+# TODO: figure out the argument passing properly
+
 latest_luma = None
 frame_lock = threading.Lock()
 running = True
